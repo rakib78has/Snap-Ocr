@@ -1,4 +1,4 @@
-import { expect, openTextPage, startSelection, test } from './fixtures.ts';
+import { expect, openPage, openTextPage, startSelection, test } from './fixtures.ts';
 
 const PAGE_TEXT = 'Capture this sentence';
 
@@ -27,7 +27,7 @@ test.describe('selection overlay and capture', () => {
     const result = await resultPagePromise;
 
     await expect(page.locator('#snapocr-host')).toHaveCount(0);
-    await expect(result).toHaveURL(/\/result\/result\.html$/);
+    await expect(result).toHaveURL(/\/result\/result\.html\?capture=[\w-]+$/);
     await expect(result.locator('#progressLabel')).toHaveText('Done');
     expect(await result.locator('#output').inputValue()).toContain(PAGE_TEXT);
   });
@@ -138,28 +138,130 @@ test.describe('selection overlay and capture', () => {
     expect(Math.round(moved.y)).toBe(100);
   });
 
-  // Known bug, inherited unchanged from v1.3.1: the selection box is appended
-  // after the handles and, with its 2px border, covers their centres. Handles
-  // are circles and hit-testing follows border-radius, so only a ~2px crescent
-  // of the SE handle is grabbable; pressing on its centre moves the box, and
-  // just outside it starts a new box. When this passes, remove `test.fail`.
-  test('grabbing the centre of the south-east handle resizes the box', async ({
+  test('every handle resizes when grabbed by its centre (regression: handles under the box)', async ({
     context,
     serviceWorker,
   }) => {
-    test.fail();
     const page = await openTextPage(context, PAGE_TEXT);
     await startSelection(serviceWorker);
+    const dims = page.locator('#snapocr-host .dims');
 
-    await page.mouse.move(100, 100);
+    // Box (100,100) 200×100; each handle's centre is dragged by (+30, +20).
+    const cases: [handle: string, x: number, y: number, expected: string][] = [
+      ['nw', 100, 100, '170 × 80'],
+      ['n', 200, 100, '200 × 80'],
+      ['ne', 300, 100, '230 × 80'],
+      ['e', 300, 150, '230 × 100'],
+      ['se', 300, 200, '230 × 120'],
+      ['s', 200, 200, '200 × 120'],
+      ['sw', 100, 200, '170 × 120'],
+      ['w', 100, 150, '170 × 100'],
+    ];
+
+    for (const [handle, x, y, expected] of cases) {
+      await page.mouse.move(100, 100);
+      await page.mouse.down();
+      await page.mouse.move(300, 200, { steps: 5 });
+      await page.mouse.up();
+      await expect(dims, `before ${handle}`).toHaveText('200 × 100');
+
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 30, y + 20, { steps: 5 });
+      await page.mouse.up();
+      await expect(dims, `after dragging ${handle}`).toHaveText(expected);
+      await page.locator('#snapocr-host button.recapture').click();
+    }
+  });
+
+  test('Enter captures without also submitting a focused page form (regression: M3)', async ({
+    context,
+    serviceWorker,
+  }) => {
+    const page = await openPage(
+      context,
+      `<form onsubmit="event.preventDefault(); window.submitted = true">
+         <input id="field" style="position:absolute;left:20px;top:20px">
+       </form>
+       <p id="target" style="position:absolute;left:100px;top:150px;margin:0;
+         font:40px Arial,sans-serif">${PAGE_TEXT}</p>`
+    );
+    await page.locator('#field').focus();
+    await startSelection(serviceWorker);
+
+    const box = (await page.locator('#target').boundingBox())!;
+    await page.mouse.move(box.x - 20, box.y - 20);
     await page.mouse.down();
-    await page.mouse.move(300, 200, { steps: 5 });
+    await page.mouse.move(box.x + box.width + 20, box.y + box.height + 20, { steps: 5 });
     await page.mouse.up();
 
-    await page.mouse.move(300, 200);
+    const resultPagePromise = context.waitForEvent('page');
+    await page.keyboard.press('Enter');
+    const result = await resultPagePromise;
+    await expect(result.locator('#progressLabel')).toHaveText('Done');
+    expect(
+      await page.evaluate(() => (window as { submitted?: boolean }).submitted)
+    ).toBeUndefined();
+  });
+
+  test('Escape closes the overlay without reaching the page, and stops listening afterwards (regression: M3, L1)', async ({
+    context,
+    serviceWorker,
+  }) => {
+    const page = await openPage(
+      context,
+      `<script>
+         window.escapes = 0;
+         document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escapes++; });
+       </script>`
+    );
+    const escapes = () => page.evaluate(() => (window as { escapes?: number }).escapes);
+
+    await startSelection(serviceWorker);
+    await expect(page.locator('#snapocr-host .overlay')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#snapocr-host')).toHaveCount(0);
+    expect(await escapes()).toBe(0);
+
+    // With the overlay gone, its listener is gone too: Escape is the page's again.
+    await page.keyboard.press('Escape');
+    expect(await escapes()).toBe(1);
+  });
+
+  test('the captured image contains the page only, not the overlay (regression: H1)', async ({
+    context,
+    serviceWorker,
+  }) => {
+    const page = await openPage(context, '');
+    await startSelection(serviceWorker);
+
+    await page.mouse.move(200, 200);
     await page.mouse.down();
-    await page.mouse.move(350, 240, { steps: 5 });
+    await page.mouse.move(400, 320, { steps: 5 });
     await page.mouse.up();
-    await expect(page.locator('#snapocr-host .dims')).toHaveText('250 × 140', { timeout: 2_000 });
+
+    const resultPagePromise = context.waitForEvent('page');
+    await page.locator('#snapocr-host button.capture').click();
+    const result = await resultPagePromise;
+    await expect(result.locator('#progressLabel')).toHaveText('Done');
+
+    // The page is plain white. Any dimming or blue selection border captured
+    // along with it would show up as darker pixels.
+    const darkest = await result.locator('#preview').evaluate(async (img: HTMLImageElement) => {
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let min = 255;
+      for (let i = 0; i < data.length; i += 4) {
+        min = Math.min(min, data[i], data[i + 1], data[i + 2]);
+      }
+      return { min, width: canvas.width, height: canvas.height };
+    });
+    expect(darkest.width).toBeGreaterThan(0);
+    expect(darkest.min).toBeGreaterThanOrEqual(250);
   });
 });

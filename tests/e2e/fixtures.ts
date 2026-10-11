@@ -82,27 +82,42 @@ export async function renderTextImage(page: Page, lines: string[]): Promise<stri
   }, lines);
 }
 
-/** Hands an image to the extension exactly as the service worker does after a capture. */
-export async function seedPendingImage(worker: Worker, dataUrl: string): Promise<void> {
-  await worker.evaluate(
-    (image) => chrome.storage.session.set({ snapocr_pending_image: image }),
-    dataUrl
-  );
+/**
+ * Hands an image to the extension exactly as the service worker does after a
+ * capture, and returns the result page path that will show it.
+ */
+export async function seedCapture(
+  worker: Worker,
+  dataUrl: string,
+  captureId = 'e2e-capture'
+): Promise<string> {
+  await worker.evaluate(([key, image]) => chrome.storage.session.set({ [key]: image }), [
+    `snapocr_pending_image:${captureId}`,
+    dataUrl,
+  ] as const);
+  return `result/result.html?capture=${captureId}`;
 }
 
-/** Serves a simple text page at TEST_ORIGIN so the overlay has something to capture. */
-export async function openTextPage(context: BrowserContext, text: string): Promise<Page> {
+/** Serves `bodyHtml` at TEST_ORIGIN as an ordinary web page and opens it. */
+export async function openPage(context: BrowserContext, bodyHtml: string): Promise<Page> {
   await context.route(`${TEST_ORIGIN}/**`, (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: `<!doctype html><html><body style="margin:0;background:#fff">
-        <p id="target" style="position:absolute;left:100px;top:150px;margin:0;
-          font:40px Arial,sans-serif;color:#000">${text}</p></body></html>`,
+      body: `<!doctype html><html><body style="margin:0;background:#fff">${bodyHtml}</body></html>`,
     })
   );
   const page = await context.newPage();
   await page.goto(`${TEST_ORIGIN}/`);
   return page;
+}
+
+/** A page with one line of large text at a known spot, for the overlay to capture. */
+export function openTextPage(context: BrowserContext, text: string): Promise<Page> {
+  return openPage(
+    context,
+    `<p id="target" style="position:absolute;left:100px;top:150px;margin:0;
+      font:40px Arial,sans-serif;color:#000">${text}</p>`
+  );
 }
 
 /** Injects the overlay the way the toolbar click does. */

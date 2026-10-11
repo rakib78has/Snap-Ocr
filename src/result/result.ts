@@ -1,8 +1,19 @@
-import { DEFAULT_LANGUAGE, LANGUAGES, languageHint, languageLabel } from '../core/languages.ts';
+import {
+  LANGUAGES,
+  languageHint,
+  languageLabel,
+  resolveInitialLanguage,
+} from '../core/languages.ts';
+import { describeOcrFailure } from '../core/ocr-errors.ts';
 import { normalizeOcrText, progressPercent } from '../core/ocr-text.ts';
 import { nextTheme, normalizeTheme, THEME_LABELS, type Theme } from '../core/theme.ts';
 import { recognizeText } from '../infra/ocr-engine.ts';
-import { LAST_LANG_KEY, PENDING_IMAGE_KEY, THEME_KEY } from '../shared/storage-keys.ts';
+import {
+  CAPTURE_PARAM,
+  LAST_LANG_KEY,
+  pendingImageKey,
+  THEME_KEY,
+} from '../shared/storage-keys.ts';
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -17,13 +28,18 @@ const progressFillEl = byId('progressFill');
 const outputEl = byId<HTMLTextAreaElement>('output');
 const copyBtn = byId<HTMLButtonElement>('copyBtn');
 const docsBtn = byId<HTMLButtonElement>('docsBtn');
+const cancelBtn = byId<HTMLButtonElement>('cancelBtn');
+const retryBtn = byId<HTMLButtonElement>('retryBtn');
 const statusTextEl = byId('statusText');
 const errorTextEl = byId('errorText');
 const langSelectEl = byId<HTMLSelectElement>('langSelect');
 const langHintEl = byId('langHint');
 
+const STATUS_FLASH_MS = 1500;
+
 let capturedDataUrl: string | undefined;
-let isRunning = false;
+let currentRun: AbortController | null = null;
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
 function showError(message: string): void {
   errorTextEl.textContent = message;
@@ -34,6 +50,17 @@ function showError(message: string): void {
 function clearError(): void {
   errorTextEl.hidden = true;
   errorTextEl.textContent = '';
+}
+
+/** Sets the status line; a `flash` message clears itself unless replaced first. */
+function setStatus(message: string, flash = false): void {
+  clearTimeout(statusTimer);
+  statusTextEl.textContent = message;
+  if (flash) {
+    statusTimer = setTimeout(() => {
+      statusTextEl.textContent = '';
+    }, STATUS_FLASH_MS);
+  }
 }
 
 function setProgress(label: string, fraction: number): void {
@@ -53,36 +80,53 @@ function populateLanguageDropdown(selected: string): void {
   langSelectEl.value = selected;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error);
+function setRunning(running: boolean): void {
+  copyBtn.disabled = running;
+  docsBtn.disabled = running;
+  langSelectEl.disabled = running;
+  cancelBtn.hidden = !running;
+  if (running) retryBtn.hidden = true;
 }
 
 async function runOCR(language: string): Promise<void> {
-  if (!capturedDataUrl || isRunning) return;
-  isRunning = true;
+  if (!capturedDataUrl || currentRun) return;
+  const run = new AbortController();
+  currentRun = run;
+
   clearError();
-  copyBtn.disabled = true;
-  docsBtn.disabled = true;
-  langSelectEl.disabled = true;
-  statusTextEl.textContent = '';
+  setRunning(true);
+  setStatus('');
   setProgress('Starting OCR...', 0);
 
   try {
     const text = await recognizeText(capturedDataUrl, {
       language,
+      signal: run.signal,
       onProgress: ({ status, progress }) => setProgress(status, progress),
     });
     outputEl.value = normalizeOcrText(text);
     setProgress('Done', 1);
-    statusTextEl.textContent = outputEl.value ? '' : 'No text detected in this region.';
-    copyBtn.disabled = false;
-    docsBtn.disabled = false;
+    setStatus(outputEl.value ? '' : 'No text detected in this region.');
+    // Remembered only once it has worked, so a language whose download
+    // failed is not retried automatically on every future capture.
+    void chrome.storage.local.set({ [LAST_LANG_KEY]: language });
+    setRunning(false);
   } catch (error) {
-    console.error('Snap OCR: recognition failed', error);
-    showError(`OCR failed: ${errorMessage(error)}`);
+    setRunning(false);
+    const message = describeOcrFailure(error, language);
+    if (message === null) {
+      setProgress('Cancelled', 0);
+      setStatus('OCR cancelled.');
+    } else {
+      console.error('Snap OCR: recognition failed', error);
+      showError(message);
+    }
+    // With nothing extracted, copying would only copy stale or empty text.
+    copyBtn.disabled = !outputEl.value;
+    docsBtn.disabled = !outputEl.value;
+    retryBtn.hidden = false;
   } finally {
-    isRunning = false;
-    langSelectEl.disabled = false;
+    currentRun = null;
   }
 }
 
@@ -111,20 +155,19 @@ themeToggleEl.addEventListener('click', () => {
 langSelectEl.addEventListener('change', () => {
   const language = langSelectEl.value;
   langHintEl.textContent = languageHint(language);
-  void chrome.storage.local.set({ [LAST_LANG_KEY]: language });
   void runOCR(language);
 });
+
+cancelBtn.addEventListener('click', () => currentRun?.abort());
+retryBtn.addEventListener('click', () => void runOCR(langSelectEl.value));
 
 copyBtn.addEventListener('click', () => {
   void (async () => {
     try {
       await navigator.clipboard.writeText(outputEl.value);
-      statusTextEl.textContent = 'Copied!';
-      setTimeout(() => {
-        statusTextEl.textContent = '';
-      }, 1500);
+      setStatus('Copied!', true);
     } catch {
-      statusTextEl.textContent = 'Copy failed - select the text manually.';
+      setStatus('Copy failed - select the text manually.');
     }
   })();
 });
@@ -133,18 +176,45 @@ docsBtn.addEventListener('click', () => {
   void (async () => {
     try {
       await navigator.clipboard.writeText(outputEl.value);
-      statusTextEl.textContent = 'Copied - paste with Ctrl+V in the new doc.';
+      setStatus('Copied - paste with Ctrl+V in the new doc.');
     } catch {
-      statusTextEl.textContent = '';
+      setStatus('Copy failed - select the text manually, then paste it into the new doc.');
     }
     window.open('https://docs.new', '_blank');
   })();
 });
 
+/**
+ * Takes this tab's capture out of extension session storage. A copy is kept in
+ * the tab's own sessionStorage so a reload still has the image; it disappears
+ * when the tab closes. That copy is best-effort: very large images exceed the
+ * sessionStorage quota and simply aren't kept across reloads.
+ */
+async function loadCapture(): Promise<string | undefined> {
+  const captureId = new URLSearchParams(location.search).get(CAPTURE_PARAM);
+  if (!captureId) return undefined;
+  const key = pendingImageKey(captureId);
+
+  try {
+    const kept = sessionStorage.getItem(key);
+    if (kept) return kept;
+  } catch {
+    // Storage blocked; fall through to the hand-off copy.
+  }
+
+  const { [key]: image } = await chrome.storage.session.get(key);
+  if (typeof image !== 'string') return undefined;
+  void chrome.storage.session.remove(key);
+  try {
+    sessionStorage.setItem(key, image);
+  } catch {
+    // Too large for sessionStorage; a reload will report the image as gone.
+  }
+  return image;
+}
+
 async function init(): Promise<void> {
-  const stored = await chrome.storage.session.get(PENDING_IMAGE_KEY);
-  const image = stored[PENDING_IMAGE_KEY];
-  capturedDataUrl = typeof image === 'string' ? image : undefined;
+  capturedDataUrl = await loadCapture();
 
   if (!capturedDataUrl) {
     showError('No captured image found. Please select a region again from the page.');
@@ -152,11 +222,9 @@ async function init(): Promise<void> {
   }
 
   previewEl.src = capturedDataUrl;
-  void chrome.storage.session.remove(PENDING_IMAGE_KEY);
 
   const { [LAST_LANG_KEY]: lastLanguage } = await chrome.storage.local.get(LAST_LANG_KEY);
-  const initialLanguage =
-    typeof lastLanguage === 'string' && lastLanguage ? lastLanguage : DEFAULT_LANGUAGE;
+  const initialLanguage = resolveInitialLanguage(lastLanguage);
 
   populateLanguageDropdown(initialLanguage);
   langHintEl.textContent = languageHint(initialLanguage);

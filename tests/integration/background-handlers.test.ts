@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createBackgroundHandlers,
   MESSAGES,
-  RESULT_PAGE,
+  resultPagePath,
   type BackgroundDeps,
 } from '../../src/background/handlers.ts';
 import { REGION_SELECTED } from '../../src/shared/messages.ts';
-import { PENDING_IMAGE_KEY } from '../../src/shared/storage-keys.ts';
+import { pendingImageKey } from '../../src/shared/storage-keys.ts';
 
 const CROPPED = 'data:image/png;base64,CROPPED';
 
@@ -18,6 +18,7 @@ function setup(overrides: Partial<BackgroundDeps> = {}) {
     openTab: vi.fn(async () => undefined),
     queryActiveTab: vi.fn(async () => ({ id: 7, windowId: 3, url: 'https://example.com' })),
     notify: vi.fn(async () => undefined),
+    newCaptureId: vi.fn(() => 'capture-1'),
     logError: vi.fn(),
     ...overrides,
   } satisfies BackgroundDeps;
@@ -90,8 +91,8 @@ describe('handling a confirmed region', () => {
     await handlers.onMessage(regionMessage, senderTab);
 
     expect(deps.captureRegion).toHaveBeenCalledWith(3, regionMessage.rect, 1.25);
-    expect(deps.setSessionValue).toHaveBeenCalledWith(PENDING_IMAGE_KEY, CROPPED);
-    expect(deps.openTab).toHaveBeenCalledWith(RESULT_PAGE);
+    expect(deps.setSessionValue).toHaveBeenCalledWith(pendingImageKey('capture-1'), CROPPED);
+    expect(deps.openTab).toHaveBeenCalledWith('result/result.html?capture=capture-1');
     // The result page reads the image on load, so it must be stored first.
     expect(order).toEqual(['store', 'open']);
   });
@@ -110,10 +111,40 @@ describe('handling a confirmed region', () => {
     expect(deps.openTab).not.toHaveBeenCalled();
   });
 
-  it('notifies when the image cannot be stored', async () => {
+  it('gives each capture its own storage key and result page (regression: M1)', async () => {
+    const ids = ['first', 'second'];
+    const { deps, handlers } = setup({ newCaptureId: vi.fn(() => ids.shift()!) });
+
+    await Promise.all([
+      handlers.onMessage(regionMessage, senderTab),
+      handlers.onMessage(regionMessage, senderTab),
+    ]);
+
+    const keys = vi.mocked(deps.setSessionValue).mock.calls.map(([key]) => key);
+    expect(keys).toEqual([pendingImageKey('first'), pendingImageKey('second')]);
+    expect(vi.mocked(deps.openTab).mock.calls.map(([path]) => path)).toEqual([
+      resultPagePath('first'),
+      resultPagePath('second'),
+    ]);
+  });
+
+  it('asks for a smaller selection when the image exceeds the storage quota', async () => {
     const { deps, handlers } = setup({
       setSessionValue: vi.fn(async () => {
-        throw new Error('QUOTA_BYTES quota exceeded');
+        throw new Error('Session storage quota bytes exceeded. Values were not stored.');
+      }),
+    });
+
+    await handlers.onMessage(regionMessage, senderTab);
+
+    expect(deps.notify).toHaveBeenCalledWith(MESSAGES.selectionTooLarge);
+    expect(deps.openTab).not.toHaveBeenCalled();
+  });
+
+  it('reports other storage failures as a generic capture failure', async () => {
+    const { deps, handlers } = setup({
+      setSessionValue: vi.fn(async () => {
+        throw new Error('Storage unavailable');
       }),
     });
 

@@ -147,6 +147,13 @@ function createButton(className: string, label: string): HTMLButtonElement {
   return button;
 }
 
+/** Resolves once a frame painted after this call has been produced. */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 function viewportSize(): Size {
   return { w: window.innerWidth, h: window.innerHeight };
 }
@@ -178,7 +185,6 @@ function mountOverlay(): void {
   const handles = {} as Record<HandleName, HTMLDivElement>;
   for (const name of HANDLE_NAMES) {
     handles[name] = createElement(`handle ${name}`);
-    overlay.appendChild(handles[name]);
   }
 
   const toolbar = createElement('toolbar');
@@ -188,7 +194,9 @@ function mountOverlay(): void {
   toolbar.append(captureBtn, recaptureBtn, cancelBtn);
 
   shadow.append(style, overlay);
-  overlay.append(hint, selection, dims, toolbar);
+  // Handles come after the selection so they paint above it: they straddle
+  // the box edge, and underneath it most of each handle could not be grabbed.
+  overlay.append(hint, selection, ...HANDLE_NAMES.map((name) => handles[name]), dims, toolbar);
   document.documentElement.appendChild(host);
 
   let mode: Mode = 'idle';
@@ -197,6 +205,11 @@ function mountOverlay(): void {
   let dragStartY = 0;
   let dragStartRect: Rect = { ...EMPTY_RECT };
   let activeHandle: HandleName | null = null;
+
+  // Every listener on the page's document/window is registered with this
+  // signal, so tearing the overlay down removes all of them at once.
+  const listeners = new AbortController();
+  const { signal } = listeners;
 
   function render(): void {
     const isBoxMode = mode === 'adjusting' || mode === 'resizing' || mode === 'moving';
@@ -250,11 +263,11 @@ function mountOverlay(): void {
   function cleanup(): void {
     window.__snapOCRActive = false;
     window.__snapOCRReset = undefined;
-    document.removeEventListener('keydown', onKeyDown, true);
+    listeners.abort();
     host.remove();
   }
 
-  function confirmCapture(): void {
+  async function confirmCapture(): Promise<void> {
     if (!isCapturable(rect)) return;
     const message: RegionSelectedMessage = {
       type: REGION_SELECTED,
@@ -262,15 +275,31 @@ function mountOverlay(): void {
       devicePixelRatio: window.devicePixelRatio || 1,
     };
     cleanup();
-    void chrome.runtime.sendMessage(message);
+    // The screenshot is taken from what is on screen, so wait until a frame
+    // without the overlay has been painted; otherwise the dimming and the
+    // selection border can end up inside the captured image.
+    await nextPaint();
+    try {
+      await chrome.runtime.sendMessage(message);
+    } catch (error) {
+      // The worker reports capture failures itself; this only fires if the
+      // message could not be delivered at all (e.g. the extension reloaded).
+      console.warn('Snap OCR: could not reach the extension', error);
+    }
   }
 
   function onKeyDown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       cleanup();
     } else if (e.key === 'Enter' && mode === 'adjusting') {
-      confirmCapture();
+      void confirmCapture();
+    } else {
+      return;
     }
+    // Handled keys belong to the overlay: without this, Enter could also
+    // submit a focused form and Escape could close the page's own dialogs.
+    e.preventDefault();
+    e.stopImmediatePropagation();
   }
 
   function beginDrag(e: MouseEvent, next: Mode): void {
@@ -307,38 +336,47 @@ function mountOverlay(): void {
     });
   }
 
-  document.addEventListener('mousemove', (e) => {
-    const dx = e.clientX - dragStartX;
-    const dy = e.clientY - dragStartY;
+  document.addEventListener(
+    'mousemove',
+    (e) => {
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
 
-    if (mode === 'drawing') {
-      rect = rectFromDrag(dragStartX, dragStartY, e.clientX, e.clientY);
-    } else if (mode === 'resizing' && activeHandle) {
-      rect = resizeRect(dragStartRect, activeHandle, dx, dy, viewportSize());
-    } else if (mode === 'moving') {
-      rect = moveRect(dragStartRect, dx, dy, viewportSize());
-    } else {
-      return;
-    }
-    render();
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (mode === 'drawing') {
-      if (!isCapturable(rect)) {
-        resetSelection();
+      if (mode === 'drawing') {
+        rect = rectFromDrag(dragStartX, dragStartY, e.clientX, e.clientY);
+      } else if (mode === 'resizing' && activeHandle) {
+        rect = resizeRect(dragStartRect, activeHandle, dx, dy, viewportSize());
+      } else if (mode === 'moving') {
+        rect = moveRect(dragStartRect, dx, dy, viewportSize());
+      } else {
         return;
       }
-      mode = 'adjusting';
       render();
-    } else if (mode === 'resizing' || mode === 'moving') {
-      mode = 'adjusting';
-      activeHandle = null;
-      render();
-    }
-  });
+    },
+    { signal }
+  );
 
-  document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener(
+    'mouseup',
+    () => {
+      if (mode === 'drawing') {
+        if (!isCapturable(rect)) {
+          resetSelection();
+          return;
+        }
+        mode = 'adjusting';
+        render();
+      } else if (mode === 'resizing' || mode === 'moving') {
+        mode = 'adjusting';
+        activeHandle = null;
+        render();
+      }
+    },
+    { signal }
+  );
+
+  // Capture phase on window, so the overlay sees keys before page handlers.
+  window.addEventListener('keydown', onKeyDown, { capture: true, signal });
 
   // Toolbar clicks must not reach the backdrop, which would start a new box.
   const swallow = (e: Event) => {
@@ -353,7 +391,7 @@ function mountOverlay(): void {
       action();
     });
   };
-  bindButton(captureBtn, confirmCapture);
+  bindButton(captureBtn, () => void confirmCapture());
   bindButton(recaptureBtn, resetSelection);
   bindButton(cancelBtn, cleanup);
 

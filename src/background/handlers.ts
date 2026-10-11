@@ -1,7 +1,7 @@
 import type { Rect } from '../core/geometry.ts';
 import { isRestrictedUrl } from '../core/restricted-url.ts';
 import { isRegionSelectedMessage } from '../shared/messages.ts';
-import { PENDING_IMAGE_KEY } from '../shared/storage-keys.ts';
+import { CAPTURE_PARAM, pendingImageKey } from '../shared/storage-keys.ts';
 
 export const SELECTION_SCRIPT = 'selection-overlay.js';
 export const RESULT_PAGE = 'result/result.html';
@@ -13,6 +13,8 @@ export const MESSAGES = {
   injectionFailed:
     "Snap OCR couldn't start on this page. Some pages (like the Chrome Web Store or internal pages) block extensions.",
   captureFailed: 'Snap OCR failed to capture that region. Please try again.',
+  selectionTooLarge:
+    'That selection is too large for Snap OCR to hand over. Please select a smaller area.',
 } as const;
 
 export interface TabRef {
@@ -33,7 +35,21 @@ export interface BackgroundDeps {
   openTab(path: string): Promise<unknown>;
   queryActiveTab(): Promise<TabRef | undefined>;
   notify(message: string): Promise<void>;
+  newCaptureId(): string;
   logError(message: string, error: unknown): void;
+}
+
+export function resultPagePath(captureId: string): string {
+  return `${RESULT_PAGE}?${CAPTURE_PARAM}=${encodeURIComponent(captureId)}`;
+}
+
+/**
+ * chrome.storage.session holds at most 10 MB, and a large high-DPI selection
+ * encoded as a PNG data URL can exceed it. Chrome reports that as an error
+ * whose message mentions the quota.
+ */
+function isQuotaError(error: unknown): boolean {
+  return error instanceof Error && /quota/i.test(error.message);
 }
 
 export function createBackgroundHandlers(deps: BackgroundDeps) {
@@ -72,11 +88,14 @@ export function createBackgroundHandlers(deps: BackgroundDeps) {
           message.rect,
           message.devicePixelRatio
         );
-        await deps.setSessionValue(PENDING_IMAGE_KEY, image);
-        await deps.openTab(RESULT_PAGE);
+        const captureId = deps.newCaptureId();
+        await deps.setSessionValue(pendingImageKey(captureId), image);
+        await deps.openTab(resultPagePath(captureId));
       } catch (error) {
         deps.logError('Snap OCR: capture failed', error);
-        await deps.notify(MESSAGES.captureFailed);
+        await deps.notify(
+          isQuotaError(error) ? MESSAGES.selectionTooLarge : MESSAGES.captureFailed
+        );
       }
     })();
   }

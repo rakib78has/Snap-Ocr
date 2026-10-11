@@ -156,3 +156,14 @@ export function languageHint(code: string): string {
     ? ''
     : 'First use downloads this language once, then it works offline.';
 }
+
+/**
+ * The language to start with: the stored choice if it is still a known
+ * Tesseract code, otherwise the default. Guards against stale or corrupted
+ * storage selecting nothing in the dropdown while OCR runs with a bad code.
+ */
+export function resolveInitialLanguage(stored: unknown): string {
+  return typeof stored === 'string' && LANGUAGES.some((l) => l.code === stored)
+    ? stored
+    : DEFAULT_LANGUAGE;
+}

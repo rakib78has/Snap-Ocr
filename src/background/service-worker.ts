@@ -25,6 +25,7 @@ const handlers = createBackgroundHandlers({
     return tab;
   },
   notify,
+  newCaptureId: () => crypto.randomUUID(),
   logError: (message, error) => console.error(message, error),
 });
 
