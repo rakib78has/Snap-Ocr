@@ -1,0 +1,140 @@
+:root {
+  color-scheme: light dark;
+  --accent: #2563eb;
+  --border: #d1d5db;
+  --bg: #f8fafc;
+  --panel-bg: #ffffff;
+  --text: #111827;
+  --muted: #4b5563;
+  --error: #b91c1c;
+  --notice-bg: #eff6ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --border: #334155;
+    --bg: #0f172a;
+    --panel-bg: #1e293b;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --error: #fca5a5;
+    --notice-bg: #1e3a5f;
+  }
+}
+:root[data-theme='dark'] {
+  --border: #334155;
+  --bg: #0f172a;
+  --panel-bg: #1e293b;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --error: #fca5a5;
+  --notice-bg: #1e3a5f;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 24px 16px;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 480px;
+  margin: 0 auto 16px;
+}
+h1 {
+  font-size: 18px;
+  margin: 0;
+}
+h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.panel {
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  margin: 12px 0 4px;
+}
+input {
+  width: 100%;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+button {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.link {
+  border: none;
+  background: none;
+  padding: 8px 4px;
+  color: var(--accent);
+  text-decoration: underline;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-toggle {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+.notice {
+  background: var(--notice-bg);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+.error {
+  color: var(--error);
+  font-size: 14px;
+}
+.info {
+  color: var(--muted);
+  font-size: 14px;
+  min-height: 1.4em;
+}
+.fine {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 20px;
+}

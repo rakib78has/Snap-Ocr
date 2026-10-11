@@ -9,7 +9,7 @@
  * their own gate.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -123,11 +123,34 @@ for (const [size, path] of Object.entries(manifest.action?.default_icon ?? {})) 
 // Files opened or loaded at runtime but not named in the manifest, so a build
 // that drops one fails only in the user's browser.
 requireFile('result/result.html', 'opened by the service worker after a capture');
+requireFile(manifest.options_ui?.page ?? 'account/account.html', 'account page (options_ui)');
 requireFile('selection-overlay.js', 'injected by chrome.scripting for area selection');
 requireFile('lib/tesseract.min.js', 'OCR engine, loaded by result.html');
 requireFile('lib/worker.min.js', 'OCR web worker');
 requireFile('lib/tesseract-core.wasm.js', 'OCR WASM core');
 requireFile('lib/eng.traineddata', 'bundled English model');
+
+// --- Firebase -----------------------------------------------------------------
+
+// The e2e build talks to local emulators. If its settings ever leak into the
+// production build, nobody could sign in, so look for them in what ships.
+const shippedScripts = [
+  'service-worker.js',
+  ...readdirSync(join(dist, 'assets'))
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => `assets/${name}`),
+];
+for (const file of shippedScripts) {
+  const source = readFileSync(join(dist, file), 'utf8');
+  // The e2e project id appears only in .env.e2e. (Emulator host strings are
+  // not a usable signal: the Firebase SDK mentions them in its own comments.)
+  if (source.includes('demo-snap-ocr')) {
+    fail(`${file} contains Firebase emulator settings; production must use the real project.`);
+  }
+  if (source.includes('snapOcrE2E')) {
+    fail(`${file} contains the e2e test hook, which must never ship.`);
+  }
+}
 
 // --- Module type ------------------------------------------------------------
 

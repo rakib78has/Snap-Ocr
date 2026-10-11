@@ -9,10 +9,32 @@ Two GitHub Actions workflows live in `.github/workflows/`.
 | `quality`  | Prettier, ESLint, TypeScript, unit + integration tests with coverage thresholds         |
 | `build`    | Production build, manifest validation, packaging; uploads `snap-ocr-<version>.zip` (30 days) |
 | `e2e`      | Builds, then runs the Playwright suite in real Chromium (under xvfb), including real OCR |
-| `security` | `npm audit`; high or critical advisories fail the job                                  |
+| `security` | `npm audit`: shipped dependencies fail on moderate+, dev tooling on critical (see below) |
 
-The E2E suite needs no network access. Language downloads are simulated by request
-interception, and English OCR uses the bundled model.
+The E2E suite needs no outside network access. It runs against the Firebase Auth and Firestore
+emulators (Java 21 is installed for them), simulates language downloads and Stripe, and uses the
+bundled English model.
+
+The `build` job needs the Firebase settings as **repository variables** (see
+[firebase-setup.md](firebase-setup.md#6-ci-and-releases)). Until they exist, it skips the
+production build with a warning; every other job still runs.
+
+### Dependency audit policy
+
+The extension ships Tesseract.js and Firebase. Any advisory of moderate severity or worse in those
+blocks a merge. `@grpc/grpc-js` is pinned to a patched version through `overrides` in
+`package.json`. Firestore pulls it in only for Node.js, and it is not in the extension bundle.
+
+Development tooling (Vite, Playwright, the Firebase emulator CLI) never ships, so only critical
+advisories block there. Everything else is printed in the job log. Known open items, as of the
+account/subscription change:
+
+| Package     | Via                                | Why it stays                                             |
+| ----------- | ---------------------------------- | -------------------------------------------------------- |
+| `braces`    | firebase-tools → chokidar 3        | No fixed release exists (3.0.3 is the latest)             |
+| `basic-ftp` | firebase-tools → proxy-agent       | Fixed only in v6; `get-uri` requires v5. Used only to fetch proxy-config files over FTP, which the emulators never do |
+
+Re-check these when upgrading `firebase-tools`.
 
 Suggested branch protection for `main`: require the four jobs above to pass before merging.
 

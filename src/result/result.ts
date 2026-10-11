@@ -6,14 +6,9 @@ import {
 } from '../core/languages.ts';
 import { describeOcrFailure } from '../core/ocr-errors.ts';
 import { normalizeOcrText, progressPercent } from '../core/ocr-text.ts';
-import { nextTheme, normalizeTheme, THEME_LABELS, type Theme } from '../core/theme.ts';
 import { recognizeText } from '../infra/ocr-engine.ts';
-import {
-  CAPTURE_PARAM,
-  LAST_LANG_KEY,
-  pendingImageKey,
-  THEME_KEY,
-} from '../shared/storage-keys.ts';
+import { setUpThemeToggle } from '../ui/theme.ts';
+import { CAPTURE_PARAM, LAST_LANG_KEY, pendingImageKey } from '../shared/storage-keys.ts';
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -130,28 +125,6 @@ async function runOCR(language: string): Promise<void> {
   }
 }
 
-function applyTheme(theme: Theme): void {
-  if (theme === 'system') {
-    document.documentElement.removeAttribute('data-theme');
-  } else {
-    document.documentElement.setAttribute('data-theme', theme);
-  }
-  themeToggleEl.textContent = THEME_LABELS[theme];
-}
-
-async function storedTheme(): Promise<Theme> {
-  const { [THEME_KEY]: stored } = await chrome.storage.local.get(THEME_KEY);
-  return normalizeTheme(stored);
-}
-
-themeToggleEl.addEventListener('click', () => {
-  void (async () => {
-    const next = nextTheme(await storedTheme());
-    await chrome.storage.local.set({ [THEME_KEY]: next });
-    applyTheme(next);
-  })();
-});
-
 langSelectEl.addEventListener('change', () => {
   const language = langSelectEl.value;
   langHintEl.textContent = languageHint(language);
@@ -231,5 +204,5 @@ async function init(): Promise<void> {
   await runOCR(initialLanguage);
 }
 
-void storedTheme().then(applyTheme);
+setUpThemeToggle(themeToggleEl);
 void init();

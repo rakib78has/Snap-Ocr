@@ -17,3 +17,6 @@ export const LAST_LANG_KEY = 'snapocr_last_lang';
 
 /** chrome.storage.local: the result page theme preference. */
 export const THEME_KEY = 'snapocr_theme';
+
+/** chrome.storage.local: the last successful subscription check (see core/entitlement.ts). */
+export const ENTITLEMENT_KEY = 'snapocr_entitlement';

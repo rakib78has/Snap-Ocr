@@ -6,8 +6,19 @@ All notable changes to Snap OCR are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Accounts and a paid plan. Using Snap OCR now requires signing in with an active or trialing
+  monthly subscription (Firebase Authentication, and Stripe via the "Run Payments with Stripe"
+  Firebase extension). The new Account page, also the extension's options page, handles sign-in,
+  sign-up, password reset, free trial checkout, subscription management and sign-out. A confirmed
+  subscription keeps working offline for 7 days. OCR still runs entirely in the browser. Setup is
+  in `docs/firebase-setup.md`.
+
 ### Changed
 
+- Shortened the store description to 109 characters (the Chrome Web Store limit is 132), and
+  removed "No accounts", which is no longer true.
 - Ported the extension to strict TypeScript, built with Vite. OCR behaviour is unchanged.
 - Tesseract.js 7.0.0, its WASM core and the English model are now pinned npm dependencies
   instead of committed files.

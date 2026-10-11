@@ -5,6 +5,7 @@ import {
   resultPagePath,
   type BackgroundDeps,
 } from '../../src/background/handlers.ts';
+import type { AccessDecision } from '../../src/core/entitlement.ts';
 import { REGION_SELECTED } from '../../src/shared/messages.ts';
 import { pendingImageKey } from '../../src/shared/storage-keys.ts';
 
@@ -12,6 +13,7 @@ const CROPPED = 'data:image/png;base64,CROPPED';
 
 function setup(overrides: Partial<BackgroundDeps> = {}) {
   const deps = {
+    checkAccess: vi.fn(async (): Promise<AccessDecision> => ({ allowed: true, source: 'live' })),
     injectSelection: vi.fn(async () => undefined),
     captureRegion: vi.fn(async () => CROPPED),
     setSessionValue: vi.fn(async () => undefined),
@@ -77,6 +79,50 @@ describe('starting a selection', () => {
     const { deps, handlers } = setup();
     await handlers.onCommand('something-else');
     expect(deps.queryActiveTab).not.toHaveBeenCalled();
+  });
+});
+
+describe('paywall', () => {
+  it.each(['signed-out', 'no-subscription', 'unverified'] as const)(
+    'opens the account page instead of the overlay when access is refused (%s)',
+    async (reason) => {
+      const { deps, handlers } = setup({
+        checkAccess: vi.fn(async (): Promise<AccessDecision> => ({ allowed: false, reason })),
+      });
+      await handlers.startSelection(senderTab);
+      expect(deps.injectSelection).not.toHaveBeenCalled();
+      expect(deps.openTab).toHaveBeenCalledWith(`account/account.html?reason=${reason}`);
+    }
+  );
+
+  it('treats a crashing access check as unverified, never as allowed', async () => {
+    const { deps, handlers } = setup({
+      checkAccess: vi.fn(async (): Promise<AccessDecision> => {
+        throw new Error('IndexedDB unavailable');
+      }),
+    });
+    await handlers.startSelection(senderTab);
+    expect(deps.injectSelection).not.toHaveBeenCalled();
+    expect(deps.openTab).toHaveBeenCalledWith('account/account.html?reason=unverified');
+    expect(deps.logError).toHaveBeenCalled();
+  });
+
+  it('allows a recently confirmed subscription while offline', async () => {
+    const { deps, handlers } = setup({
+      checkAccess: vi.fn(async (): Promise<AccessDecision> => ({
+        allowed: true,
+        source: 'cached',
+      })),
+    });
+    await handlers.startSelection(senderTab);
+    expect(deps.injectSelection).toHaveBeenCalledWith(7);
+  });
+
+  it('explains restricted pages without checking the subscription', async () => {
+    const { deps, handlers } = setup();
+    await handlers.startSelection({ id: 7, windowId: 3, url: 'chrome://settings' });
+    expect(deps.checkAccess).not.toHaveBeenCalled();
+    expect(deps.notify).toHaveBeenCalledWith(MESSAGES.restrictedPage);
   });
 });
 

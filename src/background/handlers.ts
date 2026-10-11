@@ -1,3 +1,4 @@
+import type { AccessDecision, DenyReason } from '../core/entitlement.ts';
 import type { Rect } from '../core/geometry.ts';
 import { isRestrictedUrl } from '../core/restricted-url.ts';
 import { isRegionSelectedMessage } from '../shared/messages.ts';
@@ -5,6 +6,7 @@ import { CAPTURE_PARAM, pendingImageKey } from '../shared/storage-keys.ts';
 
 export const SELECTION_SCRIPT = 'selection-overlay.js';
 export const RESULT_PAGE = 'result/result.html';
+export const ACCOUNT_PAGE = 'account/account.html';
 export const ACTIVATE_COMMAND = 'activate-selection';
 
 export const MESSAGES = {
@@ -29,6 +31,8 @@ export interface TabRef {
  * real Chrome implementations.
  */
 export interface BackgroundDeps {
+  /** Whether the signed-in user's subscription allows using Snap OCR now. */
+  checkAccess(): Promise<AccessDecision>;
   injectSelection(tabId: number): Promise<unknown>;
   captureRegion(windowId: number, rect: Rect, devicePixelRatio: number): Promise<string>;
   setSessionValue(key: string, value: string): Promise<void>;
@@ -37,6 +41,10 @@ export interface BackgroundDeps {
   notify(message: string): Promise<void>;
   newCaptureId(): string;
   logError(message: string, error: unknown): void;
+}
+
+export function accountPagePath(reason: DenyReason): string {
+  return `${ACCOUNT_PAGE}?reason=${reason}`;
 }
 
 export function resultPagePath(captureId: string): string {
@@ -58,6 +66,21 @@ export function createBackgroundHandlers(deps: BackgroundDeps) {
 
     if (isRestrictedUrl(tab.url)) {
       await deps.notify(MESSAGES.restrictedPage);
+      return;
+    }
+
+    // Paywall: without a signed-in, subscribed user, show the account page
+    // instead of the overlay. A failed check is treated as unverified rather
+    // than as access granted.
+    let access: AccessDecision;
+    try {
+      access = await deps.checkAccess();
+    } catch (error) {
+      deps.logError('Snap OCR: access check failed', error);
+      access = { allowed: false, reason: 'unverified' };
+    }
+    if (!access.allowed) {
+      await deps.openTab(accountPagePath(access.reason));
       return;
     }
 
