@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Snap OCR - Result</title>
+    <link rel="icon" href="../icons/icon48.png" />
+    <link rel="stylesheet" href="./result.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <h1>Snap OCR</h1>
+      <button class="theme-toggle" id="themeToggle" type="button"></button>
+    </div>
+    <div class="layout">
+      <div class="panel preview-panel">
+        <div class="progress-label">Captured region</div>
+        <img id="preview" alt="Captured screenshot" />
+      </div>
+      <div class="panel result-panel">
+        <div class="lang-row">
+          <label for="langSelect">Language</label>
+          <select id="langSelect"></select>
+          <span class="lang-hint" id="langHint"></span>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-label" id="progressLabel">Starting OCR...</div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+        <textarea
+          id="output"
+          placeholder="Extracted text will appear here..."
+          spellcheck="false"
+        ></textarea>
+        <div class="actions">
+          <button class="primary" id="copyBtn" disabled>Copy text</button>
+          <button id="docsBtn" disabled>Open Google Docs</button>
+          <button id="cancelBtn" type="button" hidden>Cancel</button>
+          <button id="retryBtn" type="button" hidden>Try again</button>
+          <span class="status-text" id="statusText"></span>
+        </div>
+        <div class="error" id="errorText" hidden></div>
+      </div>
+    </div>
+    <!-- Prebuilt engine copied from the pinned tesseract.js package at build time. -->
+    <script src="../lib/tesseract.min.js"></script>
+    <script type="module" src="./result.ts"></script>
+  </body>
+</html>
