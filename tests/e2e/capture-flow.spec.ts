@@ -1,4 +1,5 @@
 import { expect, openPage, openTextPage, startSelection, test } from './fixtures.ts';
+import { expectOcrText } from './ocr-match.ts';
 
 const PAGE_TEXT = 'Capture this sentence';
 
@@ -29,7 +30,7 @@ test.describe('selection overlay and capture', () => {
     await expect(page.locator('#snapocr-host')).toHaveCount(0);
     await expect(result).toHaveURL(/\/result\/result\.html\?capture=[\w-]+$/);
     await expect(result.locator('#progressLabel')).toHaveText('Done');
-    expect(await result.locator('#output').inputValue()).toContain(PAGE_TEXT);
+    expectOcrText(await result.locator('#output').inputValue(), PAGE_TEXT);
   });
 
   test('Enter captures once the box is drawn', async ({ context, serviceWorker }) => {
@@ -46,7 +47,7 @@ test.describe('selection overlay and capture', () => {
     await page.keyboard.press('Enter');
     const result = await resultPagePromise;
     await expect(result.locator('#progressLabel')).toHaveText('Done');
-    expect(await result.locator('#output').inputValue()).toContain(PAGE_TEXT);
+    expectOcrText(await result.locator('#output').inputValue(), PAGE_TEXT);
   });
 
   test('Escape removes the overlay without capturing', async ({ context, serviceWorker }) => {
