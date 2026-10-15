@@ -270,6 +270,71 @@ test.describe('account page', () => {
   });
 });
 
+/** How many signed-in users Firebase has committed to its IndexedDB store, read once. */
+function committedSessions(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const open = indexedDB.open('firebaseLocalStorageDb');
+        open.onerror = () => reject(new Error('IndexedDB open failed'));
+        open.onsuccess = () => {
+          const db = open.result;
+          const request = db
+            .transaction('firebaseLocalStorage', 'readonly')
+            .objectStore('firebaseLocalStorage')
+            .getAll();
+          request.onsuccess = () => {
+            db.close();
+            const rows = request.result as { fbase_key: string }[];
+            resolve(rows.filter((row) => row.fbase_key.startsWith('firebase:authUser:')).length);
+          };
+        };
+      })
+  );
+}
+
+// Firebase reports sign-in and sign-out as done before its IndexedDB write
+// commits. The account page must not show a state that is not saved yet, or a
+// reload or closed tab in that window can lose it (seen on the CI runner). The
+// gap is timing-dependent, so this checks the guarantee on every round of a
+// slowed-down sign-up / sign-out / sign-in cycle, then reloads.
+test('the account page only shows a session state once it is saved', async ({
+  context,
+  extensionId,
+}) => {
+  test.setTimeout(240_000);
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
+  const url = extensionUrl(extensionId, 'account/account.html');
+
+  for (let round = 0; round < 8; round++) {
+    const email = `slow${round}@example.com`;
+    await page.goto(url);
+    await expect(page.locator('#signedOut')).toBeVisible();
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill('a-good-password');
+    await page.locator('#createBtn').click();
+    await expect(page.locator('#userEmail')).toHaveText(email);
+    expect(await committedSessions(page), `round ${round}: after sign-up`).toBe(1);
+
+    await page.locator('#signOutBtn').click();
+    await expect(page.locator('#signedOut')).toBeVisible();
+    expect(await committedSessions(page), `round ${round}: after sign-out`).toBe(0);
+
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill('a-good-password');
+    await page.locator('#signInBtn').click();
+    await expect(page.locator('#userEmail')).toHaveText(email);
+    expect(await committedSessions(page), `round ${round}: after sign-in`).toBe(1);
+
+    await page.reload();
+    await expect(page.locator('#userEmail'), `round ${round}: after reload`).toHaveText(email);
+    await page.locator('#signOutBtn').click();
+    await expect(page.locator('#signedOut')).toBeVisible();
+  }
+});
+
 test.describe('firestore rules', () => {
   test('users can create checkout sessions only for themselves', async () => {
     const alice = await createUser('alice@example.com');
