@@ -8,6 +8,7 @@ import {
   test,
   TEST_ORIGIN,
 } from './fixtures.ts';
+import { expectOcrText } from './ocr-match.ts';
 
 /** Renders `lines` to an image, hands it over as capture `captureId`, and opens its result page. */
 async function openResultFor(
@@ -37,8 +38,7 @@ test.describe('result page', () => {
 
     await expect(page.locator('#progressLabel')).toHaveText('Done');
     const text = await page.locator('#output').inputValue();
-    expect(text).toContain('Snap OCR reads this line');
-    expect(text).toContain('Second line 2026');
+    expectOcrText(text, 'Snap OCR reads this line\nSecond line 2026');
     // Line structure is preserved, not flattened.
     expect(text.split('\n')).toHaveLength(2);
 
@@ -77,7 +77,7 @@ test.describe('result page', () => {
     await page.reload();
     await expect(page.locator('#progressLabel')).toHaveText('Done');
     await expect(page.locator('#errorText')).toBeHidden();
-    expect(await page.locator('#output').inputValue()).toContain('Survives a reload');
+    expectOcrText(await page.locator('#output').inputValue(), 'Survives a reload');
   });
 
   test('two captures in a row each show their own image (regression: M1)', async ({
@@ -105,8 +105,8 @@ test.describe('result page', () => {
 
     await expect(pageOne.locator('#progressLabel')).toHaveText('Done');
     await expect(pageTwo.locator('#progressLabel')).toHaveText('Done');
-    expect(await pageOne.locator('#output').inputValue()).toContain('First capture');
-    expect(await pageTwo.locator('#output').inputValue()).toContain('Second capture');
+    expectOcrText(await pageOne.locator('#output').inputValue(), 'First capture');
+    expectOcrText(await pageTwo.locator('#output').inputValue(), 'Second capture');
   });
 
   test('reports when the image contains no text', async ({
@@ -146,7 +146,7 @@ test.describe('result page', () => {
 
     await expect(page.locator('#langSelect')).toHaveValue('eng');
     await expect(page.locator('#progressLabel')).toHaveText('Done');
-    expect(await page.locator('#output').inputValue()).toContain('Back to English');
+    expectOcrText(await page.locator('#output').inputValue(), 'Back to English');
   });
 
   test('a language whose download fails is not remembered, and Try again recovers (regression: M8)', async ({
@@ -205,7 +205,7 @@ test.describe('result page', () => {
     await expect(page.locator('#cancelBtn')).toBeHidden();
     await expect(page.locator('#langSelect')).toBeEnabled();
     // The earlier result is still there and can be copied.
-    expect(await page.locator('#output').inputValue()).toContain('Cancel then retry');
+    expectOcrText(await page.locator('#output').inputValue(), 'Cancel then retry');
     await expect(page.locator('#copyBtn')).toBeEnabled();
 
     await context.unroute('https://cdn.jsdelivr.net/**');
@@ -233,7 +233,7 @@ test.describe('result page', () => {
     const reader = await openTextPage(context, 'clipboard reader');
     const clipboard = await reader.evaluate(() => navigator.clipboard.readText());
     expect(clipboard).toBe(extracted);
-    expect(clipboard).toContain('Copy me please');
+    expectOcrText(clipboard, 'Copy me please');
   });
 
   test('cycles and remembers the theme', async ({ context, extensionId }) => {
