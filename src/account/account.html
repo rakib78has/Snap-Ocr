@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Snap OCR - Account</title>
+    <link rel="icon" href="../icons/icon48.png" />
+    <link rel="stylesheet" href="./account.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <h1>Snap OCR</h1>
+      <button class="theme-toggle" id="themeToggle" type="button"></button>
+    </div>
+
+    <main class="panel">
+      <h2>Your account</h2>
+      <p class="notice" id="reason" hidden></p>
+
+      <p id="loading">Loading…</p>
+
+      <section id="signedOut" hidden>
+        <form id="authForm" novalidate>
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="email" required />
+          <label for="password">Password</label>
+          <input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            minlength="6"
+            required
+          />
+          <div class="actions">
+            <button class="primary" id="signInBtn" type="submit">Sign in</button>
+            <button id="createBtn" type="button">Create account</button>
+            <button class="link" id="resetBtn" type="button">Forgot password?</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="signedIn" hidden>
+        <p>Signed in as <strong id="userEmail"></strong></p>
+        <p id="planStatus"></p>
+        <div class="actions">
+          <button class="primary" id="subscribeBtn" type="button" hidden>Start free trial</button>
+          <button id="manageBtn" type="button" hidden>Manage subscription</button>
+          <button id="refreshBtn" type="button">Refresh status</button>
+          <button id="signOutBtn" type="button">Sign out</button>
+        </div>
+      </section>
+
+      <p class="error" id="errorText" role="alert" hidden></p>
+      <p class="info" id="infoText" role="status" aria-live="polite"></p>
+
+      <p class="fine">
+        Your screenshots and extracted text never leave your computer. Your email address and
+        subscription status are handled by Firebase (Google) and payments by Stripe.
+      </p>
+    </main>
+
+    <script type="module" src="./account.ts"></script>
+  </body>
+</html>

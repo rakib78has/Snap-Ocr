@@ -1,30 +1,51 @@
 # Snap OCR — Chrome Extension
 
 Snap OCR lets you drag-select any area of your screen and instantly get back editable text. OCR runs
-locally in your browser using [Tesseract.js](https://github.com/naptha/tesseract.js) — no accounts,
-no API keys, no cost. Your screenshots and extracted text never leave your machine. (Picking a
-language other than English downloads that language's model once; see
-[Using other languages](#using-other-languages).)
+locally in your browser using [Tesseract.js](https://github.com/naptha/tesseract.js). Your
+screenshots and extracted text never leave your machine. (Picking a language other than English
+downloads that language's model once; see [Using other languages](#using-other-languages).)
+
+Using Snap OCR requires an account with an active subscription, which starts with a free trial. See
+[Account and subscription](#account-and-subscription).
 
 ## Install (load as an unpacked extension)
 
 Snap OCR is written in TypeScript and must be built once before Chrome can load it.
 
 1. Install [Node.js](https://nodejs.org/) 20.19 or newer.
-2. In this folder, run:
+2. Put the Firebase and Stripe settings in `.env.production.local` (see
+   [docs/firebase-setup.md](docs/firebase-setup.md)).
+3. In this folder, run:
    ```sh
    npm ci
    npm run build
    ```
-   This produces the loadable extension in `dist/`.
-3. Open Chrome and go to `chrome://extensions`.
-4. Turn on **Developer mode** (top right), click **Load unpacked**, and select the `dist` folder.
-5. Pin Snap OCR from the puzzle-piece menu so its icon is always visible.
+   This produces the loadable extension in `dist/`. The build stops, listing what is missing, if
+   the settings are incomplete.
+4. Open Chrome and go to `chrome://extensions`.
+5. Turn on **Developer mode** (top right), click **Load unpacked**, and select the `dist` folder.
+6. Pin Snap OCR from the puzzle-piece menu so its icon is always visible.
 
 After a rebuild, click the reload icon on the Snap OCR card in `chrome://extensions`.
 
 Optional: to use Snap OCR on PDF files opened from your disk (`file://` URLs), open **Details** for
 Snap OCR in `chrome://extensions` and turn on **Allow access to file URLs**.
+
+## Account and subscription
+
+The first time you click the Snap OCR icon (or press the shortcut), the **Account** page opens.
+Create an account with your email and a password, then choose **Start free trial**. Checkout is
+handled by Stripe in a new tab, and the Account page updates on its own once your trial starts.
+
+You can reopen the Account page at any time from **chrome://extensions → Snap OCR → Extension
+options**. From there you can **Manage subscription** (change card, cancel) or **Sign out**.
+
+If you're offline, Snap OCR keeps working for up to 7 days after it last confirmed your
+subscription.
+
+**Privacy:** your screenshots and the extracted text are processed only in your browser and are
+never uploaded. Your email address and sign-in are handled by Firebase Authentication (Google), and
+payments by Stripe. Snap OCR never sees your card details.
 
 ## Day-to-day usage
 
@@ -92,12 +113,15 @@ remembered. The selection overlay looks the same on every page.
 | `npm run format`            | Prettier                                                         |
 | `npm test`                  | Unit and integration tests (Vitest)                              |
 | `npm run test:coverage`     | The same, with a coverage report and thresholds                  |
-| `npm run test:e2e`          | Playwright tests against the built extension, including real OCR |
+| `npm run test:e2e`          | Builds `dist-e2e/`, starts the Firebase emulators, runs Playwright (real OCR, real Firebase Auth, Firestore rules) |
+| `npm run emulators`         | Starts the Auth and Firestore emulators on their own, for manual testing |
 | `npm run validate:manifest` | Checks the built manifest, permissions and required files        |
 | `npm run package`           | Zips `dist/` for the Chrome Web Store                            |
 | `npm run verify`            | Format, lint, types, tests, build and validation in one go       |
 
-Run `npx playwright install chromium` once before the first `npm run test:e2e`, and build first.
+Run `npx playwright install chromium` once before the first `npm run test:e2e`. The Firebase
+emulators need **Java 21** or newer on your `PATH`. `npm run build` and `npm run verify` need
+`.env.production.local`.
 
 ### Layout
 
@@ -107,9 +131,11 @@ src/
   background/      service worker: injection, capture and crop, hand-off to the result page
   content/         drag-to-select overlay (built as a classic script for executeScript)
   result/          result page: OCR, language picker, copy, theme
+  account/         account page: sign in, free trial checkout, manage subscription
   core/            pure logic: geometry, data URLs, languages, theme, text helpers
   shared/          message contracts and storage keys used across contexts
-  infra/           Tesseract.js adapter
+  infra/           Tesseract.js adapter, Firebase (Auth, Firestore Lite) and Stripe flows
+  ui/              small UI helpers shared by the pages
 scripts/           build validation, packaging, e2e build preparation
 tests/             unit, integration and e2e suites
 ```
@@ -121,12 +147,18 @@ Tesseract.js, its WASM core and the English model are pinned npm dependencies (`
 the prebuilt browser files into `dist/lib/`. They're byte-identical to the files previously vendored
 in the repository, so OCR behaviour is unchanged.
 
-### E2E tests and `activeTab`
+### The e2e build
 
-In real use, `activeTab` is granted when you click the toolbar icon or press the shortcut. Playwright
-can't do either, because both are browser UI. `npm run test:e2e` therefore runs against `dist-e2e/`:
-the production build plus a single `host_permissions: ["<all_urls>"]` entry standing in for that
-grant. The production build is validated to have no host permissions.
+`npm run test:e2e` runs against `dist-e2e/`, built with `vite --mode e2e`. It differs from the
+production build in three ways:
+
+- It uses the Firebase emulators under the offline-only `demo-snap-ocr` project (`.env.e2e`).
+- It adds `host_permissions: ["<all_urls>"]` in place of the `activeTab` grant. In real use that
+  grant comes from clicking the toolbar icon or pressing the shortcut, which are browser UI that
+  Playwright can't reach.
+- Its service worker exposes its handlers so tests can do what a toolbar click does.
+
+`scripts/validate-build.mjs` rejects a production build containing any of these.
 
 ## Licences
 

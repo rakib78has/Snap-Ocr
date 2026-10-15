@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, types and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # `npm ci` installs exactly the lockfile, so a build is reproducible and
+      # a tampered lockfile fails rather than silently resolving something new.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit and integration tests
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
+  build:
+    name: Build and validate
+    runs-on: ubuntu-latest
+    # The production build needs the Firebase project's settings. They are
+    # public identifiers, kept as repository variables (Settings → Secrets and
+    # variables → Actions → Variables). See docs/firebase-setup.md.
+    env:
+      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+      VITE_STRIPE_PRICE_ID: ${{ vars.VITE_STRIPE_PRICE_ID }}
+      VITE_FIREBASE_FUNCTIONS_REGION: ${{ vars.VITE_FIREBASE_FUNCTIONS_REGION }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Until the Firebase project exists there is nothing to build a
+      # shippable package against; the e2e job still builds and tests
+      # everything against the local emulators.
+      - name: Check Firebase settings are configured
+        id: settings
+        run: |
+          if [ -z "$VITE_FIREBASE_PROJECT_ID" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Firebase repository variables are not set; skipping the production build and package."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build extension
+        if: steps.settings.outputs.configured == 'true'
+        run: npm run build
+
+      # A successful build does not prove the manifest is loadable or that the
+      # paths it names were emitted. That is a separate gate.
+      - name: Validate manifest and artifacts
+        if: steps.settings.outputs.configured == 'true'
+        run: npm run validate:manifest
+
+      - name: Package for the Chrome Web Store
+        if: steps.settings.outputs.configured == 'true'
+        run: npm run package
+
+      - name: Upload extension package
+        if: steps.settings.outputs.configured == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: snap-ocr-extension
+          path: snap-ocr-*.zip
+          retention-days: 30
+          if-no-files-found: error
+
+  e2e:
+    name: End-to-end (real Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # The Firebase emulators that stand in for Auth and Firestore need Java.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      # test:e2e builds dist-e2e/ (wired to the emulators), starts the Auth
+      # and Firestore emulators, and runs Playwright against the built
+      # extension: real OCR with the bundled English model, real Firebase
+      # Auth, and firestore.rules. Language downloads and Stripe are simulated,
+      # so no outside network is needed. xvfb keeps the MV3 service worker
+      # reliable on a headless runner.
+      - name: Run end-to-end tests
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Everything that ships in the extension (Tesseract.js, Firebase): any
+      # advisory of moderate severity or worse blocks the merge.
+      - name: Audit shipped dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+
+      # Build and test tooling never ships. Critical advisories still block;
+      # lower ones are reported below. At the time of writing, firebase-tools
+      # (the emulator CLI) pulls in braces (no fixed release exists) and
+      # basic-ftp (fixed only in a major version its parent does not accept).
+      # See docs/ci-cd.md.
+      - name: Audit development tooling
+        run: npm audit --audit-level=critical
+
+      - name: Report all advisories
+        if: always()
+        run: npm audit || true

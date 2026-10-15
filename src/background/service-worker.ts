@@ -1,3 +1,4 @@
+import { checkAccess } from '../infra/account.ts';
 import { captureRegion } from './capture.ts';
 import { createBackgroundHandlers, SELECTION_SCRIPT } from './handlers.ts';
 
@@ -15,6 +16,7 @@ async function notify(message: string): Promise<void> {
 }
 
 const handlers = createBackgroundHandlers({
+  checkAccess: () => checkAccess(),
   injectSelection: (tabId) =>
     chrome.scripting.executeScript({ target: { tabId }, files: [SELECTION_SCRIPT] }),
   captureRegion,
@@ -44,3 +46,11 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   // No response is ever sent back to the overlay.
   return false;
 });
+
+// The e2e build exposes the handlers so tests can do what a toolbar click
+// does; automation cannot click browser UI. `import.meta.env.MODE` is a
+// build-time constant, so production bundles drop this block entirely
+// (scripts/validate-build.mjs checks that it is gone).
+if (import.meta.env.MODE === 'e2e') {
+  (globalThis as { snapOcrE2E?: typeof handlers }).snapOcrE2E = handlers;
+}

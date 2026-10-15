@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// Security rules for the data the "Run Payments with Stripe" Firebase extension
+// keeps in sync (https://github.com/invertase/stripe-firebase-extensions).
+// Users may only see their own customer record, and may only create checkout
+// sessions for themselves. Subscriptions and payments are written exclusively
+// by the extension's Cloud Functions (Admin SDK, which bypasses these rules).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /customers/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      match /checkout_sessions/{id} {
+        allow read, create: if request.auth != null && request.auth.uid == uid;
+      }
+      match /subscriptions/{id} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+      }
+      match /payments/{id} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    match /products/{id} {
+      allow read: if true;
+
+      match /prices/{id} {
+        allow read: if true;
+      }
+      match /tax_rates/{id} {
+        allow read: if true;
+      }
+    }
+  }
+}
