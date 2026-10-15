@@ -14,6 +14,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** `--strict` (used by the release workflow) treats every warning as an error. */
+const strict = process.argv.includes('--strict');
 const dist = join(root, 'dist');
 
 /** Permissions the extension is allowed to request. Any addition must be a
@@ -148,7 +151,11 @@ if (/^\s*(import|export)\s/m.test(overlaySource)) {
 
 // --- Report -----------------------------------------------------------------
 
-for (const warning of warnings) console.warn(`⚠ ${warning}`);
+if (strict) {
+  errors.push(...warnings.map((warning) => `${warning} (strict mode)`));
+} else {
+  for (const warning of warnings) console.warn(`⚠ ${warning}`);
+}
 
 if (errors.length > 0) {
   for (const error of errors) console.error(`✖ ${error}`);
